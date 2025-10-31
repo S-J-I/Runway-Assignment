@@ -46,7 +46,8 @@
 
 /* TODO */
 /* Add your synchronization variables here */
-
+sem_t RunwayCapacity; // Runway capacity only lets 2 on at a time
+sem_t Mutex; // Only letting Aircraft_on_runway, etc change 1 at a time
 /* basic information about simulation.  they are printed/checked at the end 
  * and in assert statements during execution.
  *
@@ -61,7 +62,6 @@ static int emergency_on_runway = 0;      /* Total number of emergency aircraft o
 static int aircraft_since_break = 0;     /* Aircraft processed since last controller break */
 static int current_direction = NORTH;    /* Current runway direction (NORTH or SOUTH) */
 static int consecutive_direction = 0;    /* Consecutive aircraft in current direction */
-
 
 typedef struct 
 {
@@ -90,6 +90,8 @@ static int initialize(aircraft_info *ai, char *filename)
   /* Initialize your synchronization variables (and 
    * other variables you might use) here
    */
+  sem_init(&RunwayCapacity, 0, MAX_RUNWAY_CAPACITY); //Only allowing 2 planes on runway. Hits 0 when busy & others wait in holding pattern
+  sem_init(&Mutex, 0, 1); // Only letting 1 on_runway change at a time
 
   /* seed random number generator for fuel reserves */
   srand(time(NULL));
@@ -180,7 +182,7 @@ void *controller_thread(void *arg)
     
     /* Allow thread to be cancelled */
     pthread_testcancel();
-    usleep(100000); // 100ms sleep to prevent busy waiting
+    sleep(100000); // 100ms sleep to prevent busy waiting
   }
   pthread_exit(NULL);
 }
@@ -200,12 +202,17 @@ void commercial_enter(aircraft_info *arg)
   /* synchronization for the simulation variables below.                   */
   /* Consider: runway capacity, direction (commercial prefer NORTH),       */
   /* controller breaks, fuel levels, emergency priorities, and fairness.   */
-  /*  YOUR CODE HERE.                                                      */ 
+  /*  YOUR CODE HERE.
+                                                        */
+  sem_wait(&RunwayCapacity); //Take a runway slot
+  sem_wait(&Mutex); //Change on_runway
 
   aircraft_on_runway    = aircraft_on_runway + 1;
   aircraft_since_break  = aircraft_since_break + 1;
   commercial_on_runway  = commercial_on_runway + 1;
   consecutive_direction = consecutive_direction + 1;
+
+  sem_post(&Mutex); //Leave on_runway alone
 }
 
 /* Code executed by a cargo aircraft to enter the runway.
@@ -221,12 +228,16 @@ void cargo_enter(aircraft_info *ai)
   /* synchronization for the simulation variables below.                   */
   /* Consider: runway capacity, direction (cargo prefer SOUTH),            */
   /* controller breaks, fuel levels, emergency priorities, and fairness.   */
-  /*  YOUR CODE HERE.                                                      */ 
+  /*  YOUR CODE HERE.                                                      */
+  sem_wait(&RunwayCapacity); //Take a runway slot
+  sem_wait(&Mutex); //Change on_runway
 
   aircraft_on_runway    = aircraft_on_runway + 1;
   aircraft_since_break  = aircraft_since_break + 1;
   cargo_on_runway       = cargo_on_runway + 1;
   consecutive_direction = consecutive_direction + 1;
+
+  sem_post(&Mutex); //Leave on_runway alone
 }
 
 /* Code executed by an emergency aircraft to enter the runway.
@@ -243,12 +254,16 @@ void emergency_enter(aircraft_info *ai)
   /* Emergency aircraft have priority and must be admitted within 30s,     */
   /* but still respect runway capacity and controller breaks.              */
   /* Emergency aircraft can use either direction.                          */
-  /*  YOUR CODE HERE.                                                      */ 
+  /*  YOUR CODE HERE.                                                      */
+  sem_wait(&RunwayCapacity); //Take a runway slot
+  sem_wait(&Mutex); //Change on_runway
 
   aircraft_on_runway = aircraft_on_runway + 1;
   aircraft_since_break = aircraft_since_break + 1;
   emergency_on_runway = emergency_on_runway + 1;
   consecutive_direction = consecutive_direction + 1;
+
+  sem_post(&Mutex); //Leave on_runway alone
 }
 
 /* Code executed by an aircraft to simulate the time spent on the runway
@@ -270,9 +285,13 @@ static void commercial_leave()
    *  TODO
    *  YOUR CODE HERE. 
    */
+  sem_wait(&Mutex); //Change on_runway
 
   aircraft_on_runway = aircraft_on_runway - 1;
   commercial_on_runway = commercial_on_runway - 1;
+
+  sem_post(&RunwayCapacity); //Open runway spot again
+  sem_post(&Mutex); //Leave on_runway alone
 }
 
 /* Code executed by a cargo aircraft when leaving the runway.
@@ -285,9 +304,13 @@ static void cargo_leave()
    * TODO
    * YOUR CODE HERE. 
    */
+  sem_wait(&Mutex); //Change on_runway
 
   aircraft_on_runway = aircraft_on_runway - 1;
   cargo_on_runway = cargo_on_runway - 1;
+
+  sem_post(&RunwayCapacity); //Open runway spot again
+  sem_post(&Mutex); //Leave on_runway alone
 }
 
 /* Code executed by an emergency aircraft when leaving the runway.
@@ -300,9 +323,13 @@ static void emergency_leave()
    * TODO
    * YOUR CODE HERE. 
    */
+  sem_wait(&Mutex); //Change on_runway
 
   aircraft_on_runway = aircraft_on_runway - 1;
   emergency_on_runway = emergency_on_runway - 1;
+
+  sem_post(&RunwayCapacity); //Open runway spot again
+  sem_post(&Mutex); //Leave on_runway alone
 }
 
 /* Main code for commercial aircraft threads.  
