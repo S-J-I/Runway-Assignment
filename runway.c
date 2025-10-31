@@ -182,7 +182,7 @@ void *controller_thread(void *arg)
     
     /* Allow thread to be cancelled */
     pthread_testcancel();
-    sleep(100000); // 100ms sleep to prevent busy waiting
+    sleep(1); // 100ms sleep to prevent busy waiting
   }
   pthread_exit(NULL);
 }
@@ -204,15 +204,42 @@ void commercial_enter(aircraft_info *arg)
   /* controller breaks, fuel levels, emergency priorities, and fairness.   */
   /*  YOUR CODE HERE.
                                                         */
-  sem_wait(&RunwayCapacity); //Take a runway slot
-  sem_wait(&Mutex); //Change on_runway
+  int AddCommercial = 0;
 
-  aircraft_on_runway    = aircraft_on_runway + 1;
-  aircraft_since_break  = aircraft_since_break + 1;
-  commercial_on_runway  = commercial_on_runway + 1;
-  consecutive_direction = consecutive_direction + 1;
+  while (AddCommercial == 0)
+	{
+    sem_wait(&Mutex);
+		int CargoCount = (cargo_on_runway); //Store on_runway in CargoCount so it doesn't clog
+		sem_post(&Mutex);
 
-  sem_post(&Mutex); //Leave on_runway alone
+    if (CargoCount > 0) //Check if there's any cargo planes, if so then wait
+    {
+      sleep(1);
+    }
+
+    else // No cargo seen
+    {
+      sem_wait(&RunwayCapacity); //Ask for a runway
+
+      sem_wait(&Mutex);
+      if (cargo_on_runway == 0) //Double check runway again
+      {
+        aircraft_on_runway    = aircraft_on_runway + 1;
+        aircraft_since_break  = aircraft_since_break + 1;
+        commercial_on_runway  = commercial_on_runway + 1;
+        consecutive_direction = consecutive_direction + 1;
+        AddCommercial = 1; //Commercial added to runway
+        sem_post(&Mutex);
+      }
+
+      else
+      {
+        sem_post(&Mutex);
+        sem_post(&RunwayCapacity); //Give up runway
+        sleep(1);
+      }
+    }
+  }
 }
 
 /* Code executed by a cargo aircraft to enter the runway.
@@ -229,15 +256,42 @@ void cargo_enter(aircraft_info *ai)
   /* Consider: runway capacity, direction (cargo prefer SOUTH),            */
   /* controller breaks, fuel levels, emergency priorities, and fairness.   */
   /*  YOUR CODE HERE.                                                      */
-  sem_wait(&RunwayCapacity); //Take a runway slot
-  sem_wait(&Mutex); //Change on_runway
+  int AddCargo = 0;
 
-  aircraft_on_runway    = aircraft_on_runway + 1;
-  aircraft_since_break  = aircraft_since_break + 1;
-  cargo_on_runway       = cargo_on_runway + 1;
-  consecutive_direction = consecutive_direction + 1;
+  while (AddCargo == 0)
+	{
+    sem_wait(&Mutex);
+		int CommercialCount = (commercial_on_runway); //Store on_runway in CargoCount so it doesn't clog
+		sem_post(&Mutex);
 
-  sem_post(&Mutex); //Leave on_runway alone
+    if (CommercialCount > 0) //Check if there's any cargo planes, if so then wait
+    {
+      sleep(1);
+    }
+
+    else // No cargo seen
+    {
+      sem_wait(&RunwayCapacity); //Ask for a runway
+
+      sem_wait(&Mutex);
+      if (commercial_on_runway == 0) //Double check runway again
+      {
+        aircraft_on_runway    = aircraft_on_runway + 1;
+        aircraft_since_break  = aircraft_since_break + 1;
+        cargo_on_runway  = cargo_on_runway + 1;
+        consecutive_direction = consecutive_direction + 1;
+        AddCargo = 1; //Commercial added to runway
+        sem_post(&Mutex);
+      }
+
+      else
+      {
+        sem_post(&Mutex);
+        sem_post(&RunwayCapacity); //Give up runway
+        sleep(1);
+      }
+    }
+  }
 }
 
 /* Code executed by an emergency aircraft to enter the runway.
