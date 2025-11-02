@@ -62,6 +62,9 @@ static int emergency_on_runway = 0;      /* Total number of emergency aircraft o
 static int aircraft_since_break = 0;     /* Aircraft processed since last controller break */
 static int current_direction = NORTH;    /* Current runway direction (NORTH or SOUTH) */
 static int consecutive_direction = 0;    /* Consecutive aircraft in current direction */
+int CommercialWaiting = 0;  // Counter for Waiting
+int CargoWaiting = 0;  // Coutner for Cargo
+int SwitchDirection = 0; // If 1 then pause everything while switching
 
 typedef struct 
 {
@@ -86,6 +89,9 @@ static int initialize(aircraft_info *ai, char *filename)
   aircraft_since_break  = 0;
   current_direction     = NORTH;
   consecutive_direction = 0;
+  CommercialWaiting = 0;
+  CargoWaiting = 0;
+  SwitchDirection = 0;
 
   /* Initialize your synchronization variables (and 
    * other variables you might use) here
@@ -179,10 +185,43 @@ void *controller_thread(void *arg)
     /* without regard for runway capacity, aircraft type, direction,      */
     /* priorities, and whether the controller needs a break.              */
     /* You need to add all of this.                                       */
-    
-    /* Allow thread to be cancelled */
-    pthread_testcancel();
-    sleep(1); // 100ms sleep to prevent busy waiting
+    sem_wait(&Mutex);
+    int Empty = (aircraft_on_runway == 0);
+    int Limit = (consecutive_direction >= DIRECTION_LIMIT);
+    int Waiting = 0;
+
+    if ((current_direction == NORTH) && (CargoWaiting > 0))
+    {
+      Waiting = 1;
+    }
+
+    if ((current_direction == SOUTH) && (CommercialWaiting > 0))
+    {
+      Waiting = 1;
+    }
+
+    int Switch = (Empty && Limit && Waiting && (SwitchDirection == 0));
+
+    if (Switch == 1)
+    {
+        SwitchDirection = 1;
+        sem_post(&Mutex);
+
+        switch_direction();
+
+        sem_wait(&Mutex);
+        SwitchDirection = 0;
+        consecutive_direction = 0;
+        sem_post(&Mutex);
+    }
+  
+    else
+    {
+      sem_post(&Mutex);
+      /* Allow thread to be cancelled */
+      pthread_testcancel();
+      sleep(1); // 100ms sleep to prevent busy waiting
+    }
   }
   pthread_exit(NULL);
 }
@@ -261,15 +300,15 @@ void cargo_enter(aircraft_info *ai)
   while (AddCargo == 0)
 	{
     sem_wait(&Mutex);
-		int CommercialCount = (commercial_on_runway); //Store on_runway in CargoCount so it doesn't clog
+		int CommercialCount = (commercial_on_runway); //Store on_runway in CommercialCount so it doesn't clog
 		sem_post(&Mutex);
 
-    if (CommercialCount > 0) //Check if there's any cargo planes, if so then wait
+    if (CommercialCount > 0) //Check if there's any commercial planes, if so then wait
     {
       sleep(1);
     }
 
-    else // No cargo seen
+    else // No commercial seen
     {
       sem_wait(&RunwayCapacity); //Ask for a runway
 
@@ -280,7 +319,7 @@ void cargo_enter(aircraft_info *ai)
         aircraft_since_break  = aircraft_since_break + 1;
         cargo_on_runway  = cargo_on_runway + 1;
         consecutive_direction = consecutive_direction + 1;
-        AddCargo = 1; //Commercial added to runway
+        AddCargo = 1; //Cargo added to runway
         sem_post(&Mutex);
       }
 
