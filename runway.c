@@ -243,13 +243,26 @@ void *controller_thread(void *arg)
         }
       }
 
-      else if((NorthSwitchEarly == 1) || (SouthSwitchEarly == 1)) //If switching early runway should be clear so switch
+      else if((NorthSwitchEarly == 1) || (SouthSwitchEarly == 1)) //If switching early stop planes from going on runway
       {
-        sem_post(&Mutex);
+        SwitchDirection = 1; //Stop planes
+
+        while(aircraft_on_runway > 0) // Let planes on runway take off
+        {
+          sem_post(&Mutex);
+          sleep(1);
+          sem_wait(&Mutex); //Wait mutex technically starting loop
+        }
+
+        sem_post(&Mutex); //Close that mutex before switch
         switch_direction();
+
+        sem_wait(&Mutex);
+        SwitchDirection = 0; //Allow planes to enter again
+        sem_post(&Mutex);
       }
 
-      else //If neither then continue
+      else //If nothing then continue
       {
         sem_post(&Mutex);
         /* Allow thread to be cancelled */
