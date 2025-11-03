@@ -194,15 +194,32 @@ void *controller_thread(void *arg)
     int SouthSwitchEarly = 0;
 
     sem_wait(&Mutex);
-    NorthSwitchLimit = (consecutive_direction >= DIRECTION_LIMIT) && (current_direction == SOUTH) && (CommercialWaiting > 0); //If limit is hit with Commercial waiting then switch
-    SouthSwitchLimit = (consecutive_direction >= DIRECTION_LIMIT) && (current_direction == NORTH) && (CargoWaiting > 0); //If limit is hit with Cargo waiting then switch
-    NorthSwitchEarly = (current_direction == SOUTH) && (CargoWaiting == 0) && (CommercialWaiting > 0) && (aircraft_on_runway == 0); //If Commercial waiting & no cargo then switch
-    SouthSwitchEarly = (current_direction == NORTH) && (CommercialWaiting == 0) && (CargoWaiting > 0) && (aircraft_on_runway == 0); //If Cargo waiting & no commercial then switch
-
     if(aircraft_since_break >= CONTROLLER_LIMIT) //Once controller at limit
     {
       Break = 1; //Stop planes from entering
-      
+
+      while(aircraft_on_runway > 0) // Controller at limit so let planes on runway take off
+      {
+        sem_post(&Mutex);
+        sleep(1);
+        sem_wait(&Mutex); //Wait mutex technically starting loop
+      }
+
+      sem_post(&Mutex); //Close that mutex before break
+      take_break();
+
+      sem_wait(&Mutex);
+      Break = 0; //Allow planes to start entering
+      sem_post(&Mutex);
+    }
+    
+    else
+    {
+      NorthSwitchLimit = (consecutive_direction >= DIRECTION_LIMIT) && (current_direction == SOUTH) && (CommercialWaiting > 0); //If limit is hit with Commercial waiting then switch
+      SouthSwitchLimit = (consecutive_direction >= DIRECTION_LIMIT) && (current_direction == NORTH) && (CargoWaiting > 0); //If limit is hit with Cargo waiting then switch
+      NorthSwitchEarly = (current_direction == SOUTH) && (CargoWaiting == 0) && (CommercialWaiting > 0) && (aircraft_on_runway == 0); //If Commercial waiting & no cargo then switch
+      SouthSwitchEarly = (current_direction == NORTH) && (CommercialWaiting == 0) && (CargoWaiting > 0) && (aircraft_on_runway == 0); //If Cargo waiting & no commercial then switch
+
       if((NorthSwitchLimit == 1) || (SouthSwitchLimit == 1)) //If limit is met then stop planes from entering
       {
         SwitchDirection = 1;
@@ -240,15 +257,7 @@ void *controller_thread(void *arg)
         sleep(1); // 100ms sleep to prevent busy waiting
       }
     }
-
-
-    if (aircraft_since_break > 8)
-    {
-      sem_wait(&Mutex);
-      take_break();
-      sem_post(&Mutex);
-    }
-
+    
   }
   
   pthread_exit(NULL);
