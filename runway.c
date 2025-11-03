@@ -222,25 +222,21 @@ void *controller_thread(void *arg)
 
       if((NorthSwitchLimit == 1) || (SouthSwitchLimit == 1)) //If limit is met then stop planes from entering
       {
-        SwitchDirection = 1;
-        sem_post(&Mutex);
-        
-        sem_wait(&Mutex);
-        if (aircraft_on_runway == 0) //Once runway clear then actually switch
-        {
-          sem_post(&Mutex);
-          
-          switch_direction();
+        SwitchDirection = 1; //Stop planes
 
-          sem_wait(&Mutex);
-          SwitchDirection = 0;
-          sem_post(&Mutex);
-        }
-        
-        else
+        while(aircraft_on_runway > 0) // Let planes on runway take off
         {
           sem_post(&Mutex);
+          sleep(1);
+          sem_wait(&Mutex); //Wait mutex technically starting loop
         }
+        
+        sem_post(&Mutex); //Close that mutex before switch
+        switch_direction();
+
+        sem_wait(&Mutex);
+        SwitchDirection = 0; //Allow planes to enter again
+        sem_post(&Mutex);
       }
 
       else if((NorthSwitchEarly == 1) || (SouthSwitchEarly == 1)) //If switching early stop planes from going on runway
