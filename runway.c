@@ -66,6 +66,7 @@ static int consecutive_direction = 0;    /* Consecutive aircraft in current dire
 int CommercialWaiting = 0;  // Counter for Waiting
 int CargoWaiting = 0;  // Coutner for Cargo
 int SwitchDirection = 0; // If 1 then pause everything while switching
+int Break = 0; //If 1 then pause everything while on break
 
 typedef struct 
 {
@@ -93,6 +94,7 @@ static int initialize(aircraft_info *ai, char *filename)
   CommercialWaiting = 0;
   CargoWaiting = 0;
   SwitchDirection = 0;
+  Break = 0;
 
   /* Initialize your synchronization variables (and 
    * other variables you might use) here
@@ -197,42 +199,56 @@ void *controller_thread(void *arg)
     NorthSwitchEarly = (current_direction == SOUTH) && (CargoWaiting == 0) && (CommercialWaiting > 0) && (aircraft_on_runway == 0); //If Commercial waiting & no cargo then switch
     SouthSwitchEarly = (current_direction == NORTH) && (CommercialWaiting == 0) && (CargoWaiting > 0) && (aircraft_on_runway == 0); //If Cargo waiting & no commercial then switch
 
-    if((NorthSwitchLimit == 1) || (SouthSwitchLimit == 1)) //If limit is met then stop planes from entering
+    if(aircraft_since_break >= CONTROLLER_LIMIT) //Once controller at limit
     {
-      SwitchDirection = 1;
-      sem_post(&Mutex);
+      Break = 1; //Stop planes from entering
       
-      sem_wait(&Mutex);
-      if (aircraft_on_runway == 0) //Once runway clear then actually switch
+      if((NorthSwitchLimit == 1) || (SouthSwitchLimit == 1)) //If limit is met then stop planes from entering
       {
+        SwitchDirection = 1;
         sem_post(&Mutex);
         
-        switch_direction();
-
         sem_wait(&Mutex);
-        SwitchDirection = 0;
-        sem_post(&Mutex);
+        if (aircraft_on_runway == 0) //Once runway clear then actually switch
+        {
+          sem_post(&Mutex);
+          
+          switch_direction();
+
+          sem_wait(&Mutex);
+          SwitchDirection = 0;
+          sem_post(&Mutex);
+        }
+        
+        else
+        {
+          sem_post(&Mutex);
+        }
       }
-      
-      else
+
+      else if((NorthSwitchEarly == 1) || (SouthSwitchEarly == 1)) //If switching early runway should be clear so switch
       {
         sem_post(&Mutex);
+        switch_direction();
+      }
+
+      else //If neither then continue
+      {
+        sem_post(&Mutex);
+        /* Allow thread to be cancelled */
+        pthread_testcancel();
+        sleep(1); // 100ms sleep to prevent busy waiting
       }
     }
 
-    else if((NorthSwitchEarly == 1) || (SouthSwitchEarly == 1)) //If switching early runway should be clear so switch
+
+    if (aircraft_since_break > 8)
     {
+      sem_wait(&Mutex);
+      take_break();
       sem_post(&Mutex);
-      switch_direction();
     }
 
-    else //If neither then continue
-    {
-      sem_post(&Mutex);
-      /* Allow thread to be cancelled */
-      pthread_testcancel();
-      sleep(1); // 100ms sleep to prevent busy waiting
-    }
   }
   
   pthread_exit(NULL);
@@ -263,13 +279,13 @@ void commercial_enter(aircraft_info *arg)
   while (AddCommercial == 0)
 	{
     sem_wait(&Mutex);
-    if ((consecutive_direction < DIRECTION_LIMIT) && (current_direction == NORTH) && (cargo_on_runway == 0) && (SwitchDirection == 0)) //If Switch/Direction/Cargo correct then give a runway
+    if ((consecutive_direction < DIRECTION_LIMIT) && (current_direction == NORTH) && (cargo_on_runway == 0) && (SwitchDirection == 0) && (Break == 0)) //If Switch/Direction/Cargo correct then give a runway
     {
       sem_post(&Mutex); //Close mutex before runway
       sem_wait(&RunwayCapacity); //Ask for a runway
 
       sem_wait(&Mutex);
-      if ((consecutive_direction < DIRECTION_LIMIT) && (current_direction == NORTH) && (cargo_on_runway == 0) && (SwitchDirection == 0)) //Double check after runway before letting through
+      if ((consecutive_direction < DIRECTION_LIMIT) && (current_direction == NORTH) && (cargo_on_runway == 0) && (SwitchDirection == 0) && (Break == 0)) //Double check after runway before letting through
       {
       aircraft_on_runway    = aircraft_on_runway + 1;
       aircraft_since_break  = aircraft_since_break + 1;
@@ -318,13 +334,13 @@ void cargo_enter(aircraft_info *ai)
   while (AddCargo == 0)
 	{
     sem_wait(&Mutex);
-    if ((consecutive_direction < DIRECTION_LIMIT) && (current_direction == SOUTH) && (commercial_on_runway == 0) && (SwitchDirection == 0)) //If Switch/Direction/Commercial correct then give a runway
+    if ((consecutive_direction < DIRECTION_LIMIT) && (current_direction == SOUTH) && (commercial_on_runway == 0) && (SwitchDirection == 0) && (Break == 0)) //If Switch/Direction/Commercial correct then give a runway
     {
       sem_post(&Mutex); //Close mutex before runway
       sem_wait(&RunwayCapacity); //Ask for a runway
 
       sem_wait(&Mutex);
-      if ((consecutive_direction < DIRECTION_LIMIT) && (current_direction == SOUTH) && (commercial_on_runway == 0) && (SwitchDirection == 0)) //Double check after runway before letting through
+      if ((consecutive_direction < DIRECTION_LIMIT) && (current_direction == SOUTH) && (commercial_on_runway == 0) && (SwitchDirection == 0) && (Break == 0)) //Double check after runway before letting through
       {
       aircraft_on_runway    = aircraft_on_runway + 1;
       aircraft_since_break  = aircraft_since_break + 1;
