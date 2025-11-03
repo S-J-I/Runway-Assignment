@@ -68,6 +68,7 @@ int CargoWaiting = 0;  // Coutner for Cargo
 int SwitchDirection = 0; // If 1 then pause everything while switching
 int Break = 0; //If 1 then pause everything while on break
 int EmergencyWaiting = 0; //Counter for Emergency
+time_t EmergencyTime = 0; //Emergency timestamp for skipping line
 
 typedef struct 
 {
@@ -97,6 +98,7 @@ static int initialize(aircraft_info *ai, char *filename)
   SwitchDirection = 0;
   Break = 0;
   EmergencyWaiting = 0;
+  EmergencyTime = 0;
 
   /* Initialize your synchronization variables (and 
    * other variables you might use) here
@@ -281,7 +283,6 @@ void *controller_thread(void *arg)
 void commercial_enter(aircraft_info *arg) 
 {
   // Suppress the compiler warning
-  (void)arg;
 
   /* TODO */
   /* Request permission to use the runway. You might also want to add      */
@@ -299,13 +300,28 @@ void commercial_enter(aircraft_info *arg)
   while (AddCommercial == 0)
 	{
     sem_wait(&Mutex);
-    if ((consecutive_direction < DIRECTION_LIMIT) && (current_direction == NORTH) && (EmergencyWaiting == 0) && (cargo_on_runway == 0) && (SwitchDirection == 0) && (Break == 0)) //If Switch/Direction/Cargo correct then give a runway
+    int CommercialTime = arg->arrival_timestamp; //Timestamp when commercial was made
+    int TimeNow = time(NULL); //Current time
+
+    int Emergency15s = ((EmergencyWaiting > 0) && (TimeNow - EmergencyTime >= 15)); //If emergency is waiting & time is older than 15 secs
+    int EmergencySkip = ((EmergencyWaiting > 0) && (CommercialTime > EmergencyTime)); //If emergency is waiting & emergency was made first
+    int EmergencyRunway = ((SwitchDirection == 0) && (Break == 0) && (aircraft_on_runway < 2)); //Check if there's a runway to use 
+    sem_post(&Mutex);
+
+    sem_wait(&Mutex);
+    if((EmergencyRunway == 1) && ((Emergency15s == 1) || (EmergencySkip == 1))) //If open runway for emergency & either are true
+    {
+      sem_post(&Mutex); //Close mutex before sleep
+      sleep(1); //Skip turn
+    }
+
+    else if ((consecutive_direction < DIRECTION_LIMIT) && (current_direction == NORTH) && (cargo_on_runway == 0) && (SwitchDirection == 0) && (Break == 0)) //If Switch/Direction/Cargo correct then give a runway
     {
       sem_post(&Mutex); //Close mutex before runway
       sem_wait(&RunwayCapacity); //Ask for a runway
 
       sem_wait(&Mutex);
-      if ((consecutive_direction < DIRECTION_LIMIT) && (current_direction == NORTH) && (EmergencyWaiting == 0) && (cargo_on_runway == 0) && (SwitchDirection == 0) && (Break == 0)) //Double check after runway before letting through
+      if ((consecutive_direction < DIRECTION_LIMIT) && (current_direction == NORTH) && (cargo_on_runway == 0) && (SwitchDirection == 0) && (Break == 0)) //Double check after runway before letting through
       {
       aircraft_on_runway    = aircraft_on_runway + 1;
       aircraft_since_break  = aircraft_since_break + 1;
@@ -330,14 +346,12 @@ void commercial_enter(aircraft_info *arg)
     }
   }
 }
-
 /* Code executed by a cargo aircraft to enter the runway.
  * You have to implement this.  Do not delete the assert() statements,
  * but feel free to add your own.
  */
 void cargo_enter(aircraft_info *ai) 
 {
-  (void)ai;
 
   /* TODO */
   /* Request permission to use the runway. You might also want to add      */
@@ -354,13 +368,28 @@ void cargo_enter(aircraft_info *ai)
   while (AddCargo == 0)
 	{
     sem_wait(&Mutex);
-    if ((consecutive_direction < DIRECTION_LIMIT) && (current_direction == SOUTH) && (EmergencyWaiting == 0) && (commercial_on_runway == 0) && (SwitchDirection == 0) && (Break == 0)) //If Switch/Direction/Commercial correct then give a runway
+    int CargoTime = ai->arrival_timestamp; //Timestamp when cargo was made
+    int TimeNow = time(NULL); //Current time
+
+    int Emergency15s = ((EmergencyWaiting > 0) && (TimeNow - EmergencyTime >= 15)); //If emergency is waiting & time is older than 15 secs
+    int EmergencySkip = ((EmergencyWaiting > 0) && (CargoTime > EmergencyTime)); //If emergency is waiting & emergency was made first
+    int EmergencyRunway = ((SwitchDirection == 0) && (Break == 0) && (aircraft_on_runway < 2)); //Check if there's a runway to use
+    sem_post(&Mutex);
+
+    sem_wait(&Mutex);
+    if((EmergencyRunway == 1) && ((Emergency15s == 1) || (EmergencySkip == 1))) //If either are true
+    {
+      sem_post(&Mutex); //Close mutex before sleep
+      sleep(1); //Skip turn
+    }
+
+    else if ((consecutive_direction < DIRECTION_LIMIT) && (current_direction == SOUTH) && (commercial_on_runway == 0) && (SwitchDirection == 0) && (Break == 0)) //If Switch/Direction/Commercial correct then give a runway
     {
       sem_post(&Mutex); //Close mutex before runway
       sem_wait(&RunwayCapacity); //Ask for a runway
 
       sem_wait(&Mutex);
-      if ((consecutive_direction < DIRECTION_LIMIT) && (current_direction == SOUTH) && (EmergencyWaiting == 0) && (commercial_on_runway == 0) && (SwitchDirection == 0) && (Break == 0)) //Double check after runway before letting through
+      if ((consecutive_direction < DIRECTION_LIMIT) && (current_direction == SOUTH) && (commercial_on_runway == 0) && (SwitchDirection == 0) && (Break == 0)) //Double check after runway before letting through
       {
       aircraft_on_runway    = aircraft_on_runway + 1;
       aircraft_since_break  = aircraft_since_break + 1;
@@ -392,7 +421,6 @@ void cargo_enter(aircraft_info *ai)
  */
 void emergency_enter(aircraft_info *ai) 
 {
-  (void)ai;
 
   /* TODO */
   /* Request permission to use the runway. You might also want to add      */
@@ -405,6 +433,12 @@ void emergency_enter(aircraft_info *ai)
 
   sem_wait(&Mutex);
   EmergencyWaiting++; //Announce Emergency plane waiting
+  int ThisEmergency = ai->arrival_timestamp; //Current emergency timestamp
+
+  if(EmergencyTime == 0 || ThisEmergency < EmergencyTime) //If first emergency or older than previous
+  {
+    EmergencyTime = ThisEmergency; //Replace the last emergency with current
+  }
   sem_post(&Mutex);
 
   while (AddEmergency == 0)
@@ -423,6 +457,10 @@ void emergency_enter(aircraft_info *ai)
         emergency_on_runway = emergency_on_runway + 1;
         consecutive_direction = consecutive_direction + 1;
         EmergencyWaiting--; //On runway so not waiting
+        if(ThisEmergency == EmergencyTime) //If same time
+        {
+          EmergencyTime = 0; //Set back to 0 so a new time can be handed
+        }
         sem_post(&Mutex);
         AddEmergency = 1; //Emergency added to runway
       }
