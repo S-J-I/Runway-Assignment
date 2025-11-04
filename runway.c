@@ -69,7 +69,8 @@ int SwitchDirection = 0; // If 1 then pause everything while switching
 int Break = 0; //If 1 then pause everything while on break
 int EmergencyWaiting = 0; //Counter for Emergency
 time_t EmergencyTime = 0; //Emergency timestamp for skipping line
-int FuelEmergency = 0; //Plane declares fuel emergency so controller can't switch
+int CommercialFuelWaiting = 0; //Counter for Commercial fuel emergences for controller
+int CargoFuelWaiting = 0; ////Counter for Cargo fuel emergences for controller
 
 typedef struct 
 {
@@ -100,7 +101,8 @@ static int initialize(aircraft_info *ai, char *filename)
   Break = 0;
   EmergencyWaiting = 0;
   EmergencyTime = 0;
-  FuelEmergency = 0;
+  CommercialFuelWaiting = 0;
+  CargoFuelWaiting = 0;
 
   /* Initialize your synchronization variables (and 
    * other variables you might use) here
@@ -198,6 +200,8 @@ void *controller_thread(void *arg)
     int SouthSwitchLimit = 0;
     int NorthSwitchEarly = 0;
     int SouthSwitchEarly = 0;
+    int NorthSwitchFuel = 0;
+    int SouthSwitchFuel = 0;
 
     sem_wait(&Mutex);
     if(aircraft_since_break >= CONTROLLER_LIMIT) //Once controller at limit
@@ -221,12 +225,24 @@ void *controller_thread(void *arg)
 
     else
     {
-      NorthSwitchLimit = (consecutive_direction >= DIRECTION_LIMIT) && (current_direction == SOUTH) && (CommercialWaiting > 0); //If limit is hit with Commercial waiting then switch
-      SouthSwitchLimit = (consecutive_direction >= DIRECTION_LIMIT) && (current_direction == NORTH) && (CargoWaiting > 0); //If limit is hit with Cargo waiting then switch
-      NorthSwitchEarly = (current_direction == SOUTH) && (CargoWaiting == 0) && (EmergencyWaiting == 0) && (CommercialWaiting > 0) && (aircraft_on_runway == 0); //If Commercial waiting & no cargo/emergency then switch
-      SouthSwitchEarly = (current_direction == NORTH) && (CommercialWaiting == 0) && (EmergencyWaiting == 0) && (CargoWaiting > 0) && (aircraft_on_runway == 0); //If Cargo waiting & no commercial/emergency then switch
+      sem_post(&Mutex); 
+      sem_wait(&Mutex);
+      int Limit = (consecutive_direction >= DIRECTION_LIMIT); //Short lines 
+      int NorthWaiting = (CargoWaiting == 0) && (CommercialWaiting > 0) && (CargoFuelWaiting == 0);
+      int SouthWaiting = (CommercialWaiting == 0) && (CargoWaiting > 0) && (CommercialFuelWaiting == 0);
+      int North = (current_direction == NORTH);
+      int South = (current_direction == SOUTH);
 
-      if((NorthSwitchLimit == 1) || (SouthSwitchLimit == 1)) //If limit is met then stop planes from entering
+      NorthSwitchLimit = ((Limit) && (South == 1) && (CommercialWaiting > 0)); //If limit is hit with Commercial waiting & no emergencies then switch
+      SouthSwitchLimit = ((Limit) && (North == 1) && (CargoWaiting > 0)); //If limit is hit with Cargo waiting & no emergencies then switch
+
+      NorthSwitchEarly = ((South == 1) && (NorthWaiting) && (aircraft_on_runway == 0)); //If Commercial waiting & no cargo/fuel emergency then switch
+      SouthSwitchEarly = ((North == 1) && (SouthWaiting) && (aircraft_on_runway == 0)); //If Cargo waiting & no commercial/fuel emergency then switch
+
+      NorthSwitchFuel = ((South == 1) && (CommercialFuelWaiting > 0)); //If cargo fuel emergency & no emergency then switch
+      SouthSwitchFuel = ((North == 1) && (CargoFuelWaiting > 0)); //if commercial fuel emergency & no emergency then switch
+
+      if((NorthSwitchFuel == 1) || (SouthSwitchFuel == 1))
       {
         SwitchDirection = 1; //Stop planes
 
@@ -245,36 +261,57 @@ void *controller_thread(void *arg)
         sem_post(&Mutex);
       }
 
-      else if((NorthSwitchEarly == 1) || (SouthSwitchEarly == 1)) //If switching early stop planes from going on runway
+      else
       {
-        SwitchDirection = 1; //Stop planes
-
-        while(aircraft_on_runway > 0) // Let planes on runway take off
+        if((NorthSwitchLimit == 1) || (SouthSwitchLimit == 1)) //If limit is met then stop planes from entering
         {
+          SwitchDirection = 1; //Stop planes
+
+          while(aircraft_on_runway > 0) // Let planes on runway take off
+          {
+            sem_post(&Mutex);
+            sleep(1);
+            sem_wait(&Mutex); //Wait mutex technically starting loop
+          }
+          
+          sem_post(&Mutex); //Close that mutex before switch
+          switch_direction();
+
+          sem_wait(&Mutex);
+          SwitchDirection = 0; //Allow planes to enter again
           sem_post(&Mutex);
-          sleep(1);
-          sem_wait(&Mutex); //Wait mutex technically starting loop
         }
 
-        sem_post(&Mutex); //Close that mutex before switch
-        switch_direction();
+        else if((NorthSwitchEarly == 1) || (SouthSwitchEarly == 1)) //If switching early stop planes from going on runway
+        {
+          SwitchDirection = 1; //Stop planes
 
-        sem_wait(&Mutex);
-        SwitchDirection = 0; //Allow planes to enter again
-        sem_post(&Mutex);
-      }
+          while(aircraft_on_runway > 0) // Let planes on runway take off
+          {
+            sem_post(&Mutex);
+            sleep(1);
+            sem_wait(&Mutex); //Wait mutex technically starting loop
+          }
 
-      else //If nothing then continue
-      {
-        sem_post(&Mutex);
-        /* Allow thread to be cancelled */
-        pthread_testcancel();
-        sleep(1); // 100ms sleep to prevent busy waiting
-      }
+          sem_post(&Mutex); //Close that mutex before switch
+          switch_direction();
+
+          sem_wait(&Mutex);
+          SwitchDirection = 0; //Allow planes to enter again
+          sem_post(&Mutex);
+        }
+
+        else //If nothing then continue
+        {
+          sem_post(&Mutex);
+          /* Allow thread to be cancelled */
+          pthread_testcancel();
+          sleep(1); // 100ms sleep to prevent busy waiting
+        }
+      } 
     }
-    
   }
-  
+
   pthread_exit(NULL);
 }
 
@@ -294,6 +331,7 @@ void commercial_enter(aircraft_info *arg)
   /*  YOUR CODE HERE.
                                                         */
   int AddCommercial = 0;
+  int FuelEmergency = 0;
 
   sem_wait(&Mutex);
   CommercialWaiting++; //Announce commercial plane waiting
@@ -305,52 +343,57 @@ void commercial_enter(aircraft_info *arg)
     int CommercialTime = arg->arrival_timestamp; //Timestamp when commercial was made
     int TimeNow = time(NULL); //Current time
     int Fuel = arg->fuel_reserve; //Get the fuel from when commerical was made
-    int EmergencyRunway = ((SwitchDirection == 0) && (Break == 0) && (aircraft_on_runway < 2)); //Check if there's a runway to use 
-    int Emergency15s = ((EmergencyWaiting > 0) && (TimeNow - EmergencyTime >= 15)); //If emergency is waiting & time is older than 15 secs
-    int EmergencySkip = ((EmergencyWaiting > 0) && (CommercialTime > EmergencyTime)); //If emergency is waiting & emergency was made first
+    int TimeWaited = (TimeNow - CommercialTime); //Get time now vs when commercial was made
+    int FuelLeft = (Fuel - TimeWaited); //Take out fuel for each second waited
+    int EmergencyRunway = ((Break == 0) && (aircraft_on_runway < 2)); //Check if there's a runway to use 
 
-    if(Fuel <= 0) //If fuel at 0 then start landing
-    {
-      FuelEmergency = 1; //Let controller know
-      EmergencyWaiting++; //Increase emergency waiting
-      printf("Plane %d Fuel Emergency\n", arg->aircraft_id); //Terminal output
-
-      if((aircraft_on_runway < 2) && (Break == 0)) //Land as long as there's room and controller isn't on break
-      {
-        sem_post(&Mutex); //Close mutex before runway
-        sem_wait(&RunwayCapacity); //Ask for a runway
-
-        sem_wait(&Mutex);
-        if((aircraft_on_runway < 2) && (Break == 0)) //Recheck after asking for runway
-        {
-          aircraft_on_runway    = aircraft_on_runway + 1;
-          aircraft_since_break  = aircraft_since_break + 1;
-          commercial_on_runway  = commercial_on_runway + 1;
-          consecutive_direction = consecutive_direction + 1;
-          CommercialWaiting--; //On runway so not waiting
-          EmergencyWaiting--; //Get rid of emergency tag
-          FuelEmergency = 0; //Reset FuelEmergency so controller can go back to normal
-          sem_post(&Mutex);
-          AddCommercial = 1; //Commercial added to runway
-      }
-
-    }
+    int NorthClear = ((current_direction == NORTH) && (cargo_on_runway == 0)); //Short lines
+    int FuelLandingChecks = ((FuelLeft <= 0) && (EmergencyRunway == 1));
+    int Limit = ((consecutive_direction < DIRECTION_LIMIT));
     sem_post(&Mutex);
 
-    sem_wait(&Mutex);
-    if((Emergency15s == 1) || (EmergencySkip == 1)) //If open runway for emergency & either are true
+    if((FuelLeft <= 0) && (FuelEmergency == 0)) //Announce FuelEmergency once
     {
-      sem_post(&Mutex); //Close mutex before sleep
-      sleep(1); //Skip turn
+      FuelEmergency = 1;
+      CommercialFuelWaiting++; //Let controller know
+      printf("Plane %d Fuel Emergency\n", arg->aircraft_id); //Terminal output
     }
 
-    else if ((current_direction == NORTH) && (cargo_on_runway == 0) && (SwitchDirection == 0) && (Break == 0)) //If Switch/Direction/Cargo correct then give a runway
+    if((FuelLandingChecks == 1) && (NorthClear == 1) && (SwitchDirection == 0)) //If no fuel & can land
     {
       sem_post(&Mutex); //Close mutex before runway
       sem_wait(&RunwayCapacity); //Ask for a runway
 
       sem_wait(&Mutex);
-      if ((current_direction == NORTH) && (cargo_on_runway == 0) && (SwitchDirection == 0) && (Break == 0)) //Double check after runway before letting through
+      if((EmergencyRunway == 1) && (NorthClear == 1) && (SwitchDirection == 0)) //Recheck after asking for runway
+      {
+        aircraft_on_runway    = aircraft_on_runway + 1;
+        aircraft_since_break  = aircraft_since_break + 1;
+        commercial_on_runway  = commercial_on_runway + 1;
+        consecutive_direction = consecutive_direction + 1;
+        CommercialWaiting--; //On runway so not waiting
+        CommercialFuelWaiting--; //Get rid of fuelwaiting tag
+        sem_post(&Mutex);
+        FuelEmergency = 0; //Reset FuelEmergency so controller can go back to normal
+        AddCommercial = 1; //Commercial added to runway
+      }
+
+      else
+      {
+        sem_post(&Mutex); //Close open mutex
+        sem_post(&RunwayCapacity); //Give back runway
+      }
+    }
+    
+
+    sem_wait(&Mutex);
+    if ((Limit == 1) && (NorthClear == 1) && (SwitchDirection == 0) && (Break == 0)) //If no fuel/emergency problems then try to land
+    {
+      sem_post(&Mutex); //Close mutex before runway
+      sem_wait(&RunwayCapacity); //Ask for a runway
+
+      sem_wait(&Mutex);
+      if ((Limit == 1) && (NorthClear == 1) && (SwitchDirection == 0) && (Break == 0)) //Double check after runway before letting through
       {
         aircraft_on_runway    = aircraft_on_runway + 1;
         aircraft_since_break  = aircraft_since_break + 1;
@@ -389,6 +432,7 @@ void cargo_enter(aircraft_info *ai)
   /* controller breaks, fuel levels, emergency priorities, and fairness.   */
   /*  YOUR CODE HERE.                                                      */
   int AddCargo = 0;
+  int FuelEmergency = 0;
 
   sem_wait(&Mutex);
   CargoWaiting++; //Announce cargo plane waiting
@@ -399,25 +443,57 @@ void cargo_enter(aircraft_info *ai)
     sem_wait(&Mutex);
     int CargoTime = ai->arrival_timestamp; //Timestamp when cargo was made
     int TimeNow = time(NULL); //Current time
+    int Fuel = ai->fuel_reserve; //Get the fuel from when cargo was made
+    int TimeWaited = (TimeNow - CargoTime); //Get time now vs when cargo was made
+    int FuelLeft = (Fuel - TimeWaited); //Take out fuel for each second waited
+    int EmergencyRunway = ((Break == 0) && (aircraft_on_runway < 2)); //Check if there's a runway to use
 
-    int Emergency15s = ((EmergencyWaiting > 0) && (TimeNow - EmergencyTime >= 15)); //If emergency is waiting & time is older than 15 secs
-    int EmergencySkip = ((EmergencyWaiting > 0) && (CargoTime > EmergencyTime)); //If emergency is waiting & emergency was made first
+    int SouthClear = ((current_direction == SOUTH) && (commercial_on_runway == 0)); //Short lines
+    int FuelLandingChecks = ((FuelLeft <= 0) && (EmergencyRunway == 1));
+    int Limit = ((consecutive_direction < DIRECTION_LIMIT));
     sem_post(&Mutex);
 
-    sem_wait(&Mutex);
-    if((Emergency15s == 1) || (EmergencySkip == 1)) //If either are true
+    if((FuelLeft <= 0) && (FuelEmergency == 0)) //Announce FuelEmergency once
     {
-      sem_post(&Mutex); //Close mutex before sleep
-      sleep(1); //Skip turn
+      FuelEmergency = 1; //Let controller know
+      CargoFuelWaiting++; //Increase emergency waiting
+      printf("Plane %d Fuel Emergency\n", ai->aircraft_id); //Terminal output
     }
 
-    else if ((current_direction == SOUTH) && (commercial_on_runway == 0) && (SwitchDirection == 0) && (Break == 0)) //If Switch/Direction/Commercial correct then give a runway
+    if((FuelLandingChecks == 1) && (SouthClear == 1) && (SwitchDirection == 0)) //If no fuel & can land
     {
       sem_post(&Mutex); //Close mutex before runway
       sem_wait(&RunwayCapacity); //Ask for a runway
 
       sem_wait(&Mutex);
-      if ((current_direction == SOUTH) && (commercial_on_runway == 0) && (SwitchDirection == 0) && (Break == 0)) //Double check after runway before letting through
+      if((EmergencyRunway == 1) && (SouthClear == 1) && (SwitchDirection == 0)) //Recheck after asking for runway
+      {
+        aircraft_on_runway    = aircraft_on_runway + 1;
+        aircraft_since_break  = aircraft_since_break + 1;
+        cargo_on_runway  = cargo_on_runway + 1;
+        consecutive_direction = consecutive_direction + 1;
+        CargoWaiting--; //On runway so not waiting
+        CargoFuelWaiting--; //Get rid of fuelwaiting tag
+        sem_post(&Mutex); //Close mutex before runway
+        FuelEmergency = 0; //Reset FuelEmergency so controller can go back to normal
+        AddCargo = 1; //Commercial added to runway
+      }
+
+      else
+      {
+        sem_post(&Mutex); //Close open mutex
+        sem_post(&RunwayCapacity); //Give back runway
+      }
+    }
+
+    sem_wait(&Mutex);
+    if ((Limit == 1) && (SouthClear == 1) && (SwitchDirection == 0) && (Break == 0)) //If no fuel/emergency problems then try to land
+    {
+      sem_post(&Mutex); //Close mutex before runway
+      sem_wait(&RunwayCapacity); //Ask for a runway
+
+      sem_wait(&Mutex);
+      if ((Limit == 1) && (SouthClear == 1) && (SwitchDirection == 0) && (Break == 0)) //Double check after runway before letting through
       {
         aircraft_on_runway    = aircraft_on_runway + 1;
         aircraft_since_break  = aircraft_since_break + 1;
@@ -472,13 +548,35 @@ void emergency_enter(aircraft_info *ai)
   while (AddEmergency == 0)
 	{
     sem_wait(&Mutex);
-    if ((consecutive_direction < DIRECTION_LIMIT) && (SwitchDirection == 0) && (Break == 0) && (aircraft_on_runway < 2)) //Only cares if SwitchLimit or Break are active & open runway slot
+    int Wait = 0; // Holds back emergency
+    int TimeNow = time(NULL); //Current time
+    int Age = (TimeNow - ThisEmergency); //Get time now vs when emergency made
+
+    int AnyCommercial = (CommercialWaiting + CommercialFuelWaiting); //Short lines
+    int AnyCargo = (CargoWaiting + CargoFuelWaiting);
+    int RunwayGood = ((SwitchDirection == 0) && (Break == 0));
+
+    if(Age < EMERGENCY_TIMEOUT) //If time < timeout
+    {
+      if(((AnyCommercial) > 0) || ((AnyCargo) > 0)) //Any planes ahead of emergency
+      {
+        Wait = 1; //Wait and don't skip line
+      }
+    }
+
+    if(Wait == 1) //If planes ahead sleep and try again
+    {
+      sem_post(&Mutex);
+      sleep(1);
+    }
+
+    else if ((RunwayGood) && (aircraft_on_runway < 2) && (Wait == 0)) //Only cares if SwitchLimit or Break are active & open runway slot
     {
       sem_post(&Mutex); //Close mutex before runway
       sem_wait(&RunwayCapacity); //Ask for a runway
 
       sem_wait(&Mutex);
-      if ((consecutive_direction < DIRECTION_LIMIT) && (SwitchDirection == 0) && (Break == 0) && (aircraft_on_runway < 2)) //Double check after runway before letting through
+      if ((RunwayGood) && (aircraft_on_runway < 2)) //Double check after runway before letting through
       {
         int remaining = EMERGENCY_TIMEOUT - (int)(time(NULL) - ai->arrival_timestamp); //Debug tiemr for emergencies
         printf("Time remaining: %ds\n", remaining); //Print debug
