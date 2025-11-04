@@ -45,16 +45,8 @@
 #define EAST  2
 #define WEST  4
 
-/* TODO */
-/* Add your synchronization variables here */
 sem_t RunwayCapacity; // Runway capacity only lets 2 on at a time
 sem_t Mutex; // Only letting Aircraft_on_runway, etc change 1 at a time
-/* basic information about simulation.  they are printed/checked at the end 
- * and in assert statements during execution.
- *
- * you are responsible for maintaining the integrity of these variables in the 
- * code that you develop. 
- */
 
 static int aircraft_on_runway = 0;       /* Total number of aircraft currently on runway */
 static int commercial_on_runway = 0;     /* Total number of commercial aircraft on runway */
@@ -82,10 +74,7 @@ typedef struct
   time_t arrival_timestamp; // timestamp when aircraft thread was created
 } aircraft_info;
 
-/* Called at beginning of simulation.  
- * TODO: Create/initialize all synchronization
- * variables and other global variables that you add.
- */
+/* Called at beginning of simulation. */
 static int initialize(aircraft_info *ai, char *filename) 
 {
   aircraft_on_runway    = 0;
@@ -188,14 +177,6 @@ void *controller_thread(void *arg)
   /* Loop while waiting for aircraft to arrive. */
   while (1) 
   {
-    /* TODO */
-    /* Add code here to handle aircraft requests, controller breaks,      */
-    /* and runway direction switches.                                     */
-    /* Currently the body of the loop is empty.  There's no communication */
-    /* between controller and aircraft, i.e. all aircraft are admitted    */
-    /* without regard for runway capacity, aircraft type, direction,      */
-    /* priorities, and whether the controller needs a break.              */
-    /* You need to add all of this.                                       */
     int NorthSwitchLimit = 0;
     int SouthSwitchLimit = 0;
     int NorthSwitchEarly = 0;
@@ -321,15 +302,6 @@ void *controller_thread(void *arg)
  */
 void commercial_enter(aircraft_info *arg) 
 {
-  // Suppress the compiler warning
-
-  /* TODO */
-  /* Request permission to use the runway. You might also want to add      */
-  /* synchronization for the simulation variables below.                   */
-  /* Consider: runway capacity, direction (commercial prefer NORTH),       */
-  /* controller breaks, fuel levels, emergency priorities, and fairness.   */
-  /*  YOUR CODE HERE.
-                                                        */
   int AddCommercial = 0;
   int FuelEmergency = 0;
 
@@ -424,13 +396,6 @@ void commercial_enter(aircraft_info *arg)
  */
 void cargo_enter(aircraft_info *ai) 
 {
-
-  /* TODO */
-  /* Request permission to use the runway. You might also want to add      */
-  /* synchronization for the simulation variables below.                   */
-  /* Consider: runway capacity, direction (cargo prefer SOUTH),            */
-  /* controller breaks, fuel levels, emergency priorities, and fairness.   */
-  /*  YOUR CODE HERE.                                                      */
   int AddCargo = 0;
   int FuelEmergency = 0;
 
@@ -525,14 +490,6 @@ void cargo_enter(aircraft_info *ai)
  */
 void emergency_enter(aircraft_info *ai) 
 {
-
-  /* TODO */
-  /* Request permission to use the runway. You might also want to add      */
-  /* synchronization for the simulation variables below.                   */
-  /* Emergency aircraft have priority and must be admitted within 30s,     */
-  /* but still respect runway capacity and controller breaks.              */
-  /* Emergency aircraft can use either direction.                          */
-  /*  YOUR CODE HERE.                                                      */
   int AddEmergency = 0;
 
   sem_wait(&Mutex);
@@ -548,29 +505,9 @@ void emergency_enter(aircraft_info *ai)
   while (AddEmergency == 0)
 	{
     sem_wait(&Mutex);
-    int Wait = 0; // Holds back emergency
-    int TimeNow = time(NULL); //Current time
-    int Age = (TimeNow - ThisEmergency); //Get time now vs when emergency made
-
-    int AnyCommercial = (CommercialWaiting + CommercialFuelWaiting); //Short lines
-    int AnyCargo = (CargoWaiting + CargoFuelWaiting);
     int RunwayGood = ((SwitchDirection == 0) && (Break == 0));
 
-    if(Age < EMERGENCY_TIMEOUT) //If time < timeout
-    {
-      if(((AnyCommercial) > 0) || ((AnyCargo) > 0)) //Any planes ahead of emergency
-      {
-        Wait = 1; //Wait and don't skip line
-      }
-    }
-
-    if(Wait == 1) //If planes ahead sleep and try again
-    {
-      sem_post(&Mutex);
-      sleep(1);
-    }
-
-    else if ((RunwayGood) && (aircraft_on_runway < 2) && (Wait == 0)) //Only cares if SwitchLimit or Break are active & open runway slot
+    if ((RunwayGood) && (aircraft_on_runway < 2)) //Only cares if SwitchLimit or Break are active & open runway slot
     {
       sem_post(&Mutex); //Close mutex before runway
       sem_wait(&RunwayCapacity); //Ask for a runway
@@ -620,10 +557,6 @@ static void use_runway(int t)
  */
 static void commercial_leave() 
 {
-  /* 
-   *  TODO
-   *  YOUR CODE HERE. 
-   */
   sem_wait(&Mutex); //Change on_runway
 
   aircraft_on_runway = aircraft_on_runway - 1;
@@ -639,10 +572,6 @@ static void commercial_leave()
  */
 static void cargo_leave() 
 {
-  /* 
-   * TODO
-   * YOUR CODE HERE. 
-   */
   sem_wait(&Mutex); //Change on_runway
 
   aircraft_on_runway = aircraft_on_runway - 1;
@@ -658,10 +587,6 @@ static void cargo_leave()
  */
 static void emergency_leave() 
 {
-  /* 
-   * TODO
-   * YOUR CODE HERE. 
-   */
   sem_wait(&Mutex); //Change on_runway
 
   aircraft_on_runway = aircraft_on_runway - 1;
