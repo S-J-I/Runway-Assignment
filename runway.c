@@ -212,8 +212,8 @@ void *controller_thread(void *arg)
       int North = (current_direction == NORTH);
       int South = (current_direction == SOUTH);
 
-      NorthSwitchLimit = ((Limit) && (South == 1) && (CommercialWaiting > 0)); //If limit is hit with Commercial waiting & no emergencies then switch
-      SouthSwitchLimit = ((Limit) && (North == 1) && (CargoWaiting > 0)); //If limit is hit with Cargo waiting & no emergencies then switch
+      NorthSwitchLimit = ((Limit) && (South == 1) && ((CommercialWaiting > 0) || (CommercialFuelWaiting > 0))); //If limit is hit with Commercial waiting & no emergencies then switch
+      SouthSwitchLimit = ((Limit) && (North == 1) && ((CargoWaiting > 0) || (CargoFuelWaiting > 0))); //If limit is hit with Cargo waiting & no emergencies then switch
 
       NorthSwitchEarly = ((South == 1) && (NorthWaiting) && (aircraft_on_runway == 0)); //If Commercial waiting & no cargo/fuel emergency then switch
       SouthSwitchEarly = ((North == 1) && (SouthWaiting) && (aircraft_on_runway == 0)); //If Cargo waiting & no commercial/fuel emergency then switch
