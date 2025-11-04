@@ -450,8 +450,8 @@ void emergency_enter(aircraft_info *ai)
       sem_wait(&Mutex);
       if ((consecutive_direction < DIRECTION_LIMIT) && (SwitchDirection == 0) && (Break == 0) && (aircraft_on_runway < 2)) //Double check after runway before letting through
       {
-        int remaining = EMERGENCY_TIMEOUT - (int)(time(NULL) - ai->arrival_timestamp);
-        printf("Time remaining: %ds\n", remaining);
+        int remaining = EMERGENCY_TIMEOUT - (int)(time(NULL) - ai->arrival_timestamp); //Debug tiemr for emergencies
+        printf("Time remaining: %ds\n", remaining); //Print debug
 
         aircraft_on_runway = aircraft_on_runway + 1;
         aircraft_since_break = aircraft_since_break + 1;
