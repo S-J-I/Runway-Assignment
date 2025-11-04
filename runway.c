@@ -69,6 +69,7 @@ int SwitchDirection = 0; // If 1 then pause everything while switching
 int Break = 0; //If 1 then pause everything while on break
 int EmergencyWaiting = 0; //Counter for Emergency
 time_t EmergencyTime = 0; //Emergency timestamp for skipping line
+int FuelEmergency = 0; //Plane declares fuel emergency so controller can't switch
 
 typedef struct 
 {
@@ -99,6 +100,7 @@ static int initialize(aircraft_info *ai, char *filename)
   Break = 0;
   EmergencyWaiting = 0;
   EmergencyTime = 0;
+  FuelEmergency = 0;
 
   /* Initialize your synchronization variables (and 
    * other variables you might use) here
@@ -302,9 +304,37 @@ void commercial_enter(aircraft_info *arg)
     sem_wait(&Mutex);
     int CommercialTime = arg->arrival_timestamp; //Timestamp when commercial was made
     int TimeNow = time(NULL); //Current time
-
+    int Fuel = arg->fuel_reserve; //Get the fuel from when commerical was made
+    int EmergencyRunway = ((SwitchDirection == 0) && (Break == 0) && (aircraft_on_runway < 2)); //Check if there's a runway to use 
     int Emergency15s = ((EmergencyWaiting > 0) && (TimeNow - EmergencyTime >= 15)); //If emergency is waiting & time is older than 15 secs
     int EmergencySkip = ((EmergencyWaiting > 0) && (CommercialTime > EmergencyTime)); //If emergency is waiting & emergency was made first
+
+    if(Fuel <= 0) //If fuel at 0 then start landing
+    {
+      FuelEmergency = 1; //Let controller know
+      EmergencyWaiting++; //Increase emergency waiting
+      printf("Plane %d Fuel Emergency\n", arg->aircraft_id); //Terminal output
+
+      if((aircraft_on_runway < 2) && (Break == 0)) //Land as long as there's room and controller isn't on break
+      {
+        sem_post(&Mutex); //Close mutex before runway
+        sem_wait(&RunwayCapacity); //Ask for a runway
+
+        sem_wait(&Mutex);
+        if((aircraft_on_runway < 2) && (Break == 0)) //Recheck after asking for runway
+        {
+          aircraft_on_runway    = aircraft_on_runway + 1;
+          aircraft_since_break  = aircraft_since_break + 1;
+          commercial_on_runway  = commercial_on_runway + 1;
+          consecutive_direction = consecutive_direction + 1;
+          CommercialWaiting--; //On runway so not waiting
+          EmergencyWaiting--; //Get rid of emergency tag
+          FuelEmergency = 0; //Reset FuelEmergency so controller can go back to normal
+          sem_post(&Mutex);
+          AddCommercial = 1; //Commercial added to runway
+      }
+
+    }
     sem_post(&Mutex);
 
     sem_wait(&Mutex);
@@ -322,13 +352,13 @@ void commercial_enter(aircraft_info *arg)
       sem_wait(&Mutex);
       if ((current_direction == NORTH) && (cargo_on_runway == 0) && (SwitchDirection == 0) && (Break == 0)) //Double check after runway before letting through
       {
-      aircraft_on_runway    = aircraft_on_runway + 1;
-      aircraft_since_break  = aircraft_since_break + 1;
-      commercial_on_runway  = commercial_on_runway + 1;
-      consecutive_direction = consecutive_direction + 1;
-      CommercialWaiting--; //On runway so not waiting
-      sem_post(&Mutex);
-      AddCommercial = 1; //Commercial added to runway
+        aircraft_on_runway    = aircraft_on_runway + 1;
+        aircraft_since_break  = aircraft_since_break + 1;
+        commercial_on_runway  = commercial_on_runway + 1;
+        consecutive_direction = consecutive_direction + 1;
+        CommercialWaiting--; //On runway so not waiting
+        sem_post(&Mutex);
+        AddCommercial = 1; //Commercial added to runway
       }
 
       else
@@ -389,13 +419,13 @@ void cargo_enter(aircraft_info *ai)
       sem_wait(&Mutex);
       if ((current_direction == SOUTH) && (commercial_on_runway == 0) && (SwitchDirection == 0) && (Break == 0)) //Double check after runway before letting through
       {
-      aircraft_on_runway    = aircraft_on_runway + 1;
-      aircraft_since_break  = aircraft_since_break + 1;
-      cargo_on_runway  = cargo_on_runway + 1;
-      consecutive_direction = consecutive_direction + 1;
-      CargoWaiting--; //On runway so not waiting
-      sem_post(&Mutex);
-      AddCargo = 1; //Commercial added to runway
+        aircraft_on_runway    = aircraft_on_runway + 1;
+        aircraft_since_break  = aircraft_since_break + 1;
+        cargo_on_runway  = cargo_on_runway + 1;
+        consecutive_direction = consecutive_direction + 1;
+        CargoWaiting--; //On runway so not waiting
+        sem_post(&Mutex);
+        AddCargo = 1; //Commercial added to runway
       }
 
       else
